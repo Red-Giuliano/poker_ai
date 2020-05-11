@@ -211,6 +211,7 @@ class ShortDeckPokerState:
         self._skip_counter = 0
         self._first_move_of_current_round = True
         self._reset_betting_round_state()
+        # TODO add attribute of public_cards, that can be supplied by convenience method
 
         # only want to do these actions in real game play, as they are slow
         if self.real_time_test:
@@ -367,16 +368,19 @@ class ShortDeckPokerState:
             # Progress from private cards to the flop.
             self._betting_stage = "flop"
             self._previous_betting_stage = "pre_flop"
+            # TODO check to see if there are supplied public cards, and then use those
             self._poker_engine.table.dealer.deal_flop(self._table)
         elif self._betting_stage == "flop":
             # Progress from flop to turn.
             self._betting_stage = "turn"
             self._previous_betting_stage = "flop"
+            # TODO check to see if there are supplied public cards, and then use those
             self._poker_engine.table.dealer.deal_turn(self._table)
         elif self._betting_stage == "turn":
             # Progress from turn to river.
             self._betting_stage = "river"
             self._previous_betting_stage = "turn"
+            # TODO check to see if there are supplied public cards, and then use those
             self._poker_engine.table.dealer.deal_river(self._table)
         elif self._betting_stage == "river":
             # Progress to the showdown.
@@ -490,6 +494,8 @@ class ShortDeckPokerState:
     def deal_bayes(self):
         players = list(range(len(self.players)))
         random.shuffle(players)
+
+        # TODO should contain the current public cards/heros real hand, if exists
         cards_selected = []
 
         for player in players:
@@ -506,13 +512,13 @@ class ShortDeckPokerState:
                 self.players[player].add_private_card(card)
             cards_selected += starting_hand_eval
 
+    # TODO add convenience method to supply public cards
+
     def _get_starting_hand(self, player_idx: int):
         """Get starting hand based on probability of reach"""
         starting_hand_idxs = list(range(len(self._starting_hand_probs[player_idx].keys())))
         starting_hands_probs = list(self._starting_hand_probs[player_idx].values())
         starting_hand_idx = np.random.choice(starting_hand_idxs, 1, p=starting_hands_probs)[0]
-        import ipdb;
-        ipdb.set_trace()
         starting_hand = list(self._starting_hand_probs[player_idx].keys())[starting_hand_idx]
         return starting_hand
 
