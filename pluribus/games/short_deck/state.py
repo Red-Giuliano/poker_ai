@@ -214,7 +214,7 @@ class ShortDeckPokerState:
         self._reset_betting_round_state()
         if public_cards:
             assert len(public_cards) in {3, 4, 5}
-            self._public_cards = public_cards
+        self._public_cards = public_cards
 
         # only want to do these actions in real game play, as they are slow
         if self.real_time_test:
