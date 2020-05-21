@@ -34,7 +34,7 @@ import random
 import time
 from itertools import combinations
 from typing import List
-import ray
+import concurrent.futures 
 import dill as pickle
 import numpy as np
 import matplotlib.pyplot as plt
@@ -47,7 +47,6 @@ from pluribus.poker.card import Card
 from pluribus.poker.deck import get_all_suits
 from pluribus.poker.evaluation import Evaluator
 
-ray.init()
 
 class GameUtility:
     """
@@ -58,6 +57,7 @@ class GameUtility:
 
         self._evaluator = Evaluator()
         self.available_cards = [x for x in cards if x not in board + our_hand]
+        self.available_hands = get_card_combos(self.available_cards, 2)
         self.our_hand = our_hand
         self.board = board
 
@@ -82,7 +82,24 @@ class GameUtility:
             return 1
         elif our_hand_rank == opp_hand_rank:
             return 2
-
+    def get_winner_fast(self) -> np.array:
+        """
+        :vectorized implementation of get_winner to process multiple hands 
+        """
+        #get our hand
+        nsims = 10
+        our_hand_rank = self.evaluate_hand(self.our_hand)
+        #get n possible opponent hands
+        opp_hands = self.opp_hand_sample(self,nsims)
+        #get the ranks of the n possible opponent hands
+        #TO DO: try to further improve performance somehow 
+        opp_hand_ranks = np.array([self.evaluate_hand(self.board,opp_hands[x]) for x in range(0,nsims)])
+        hand_results = (our_hand_rank-opp_hand_ranks)
+        
+        return [np.count_nonzero(hand_results == 1), np.count_nonzero(hand_results == -1), 
+                np.count_nonzero(hand_results == 0)]
+        
+                                            
     @property
     def opp_hand(self) -> List[int]:
         """
@@ -91,43 +108,15 @@ class GameUtility:
         """
         return random.sample(self.available_cards, 2)
 
-
-    
-    
-
-    
-def simulate_get_ehs(game: GameUtilility, num_simulations: int = 10) -> List[float]:
+    @property
+    def opp_hands_sample(self, nsims:int ) -> List[int]:
         """
-        # TODO: probably want to increase simulations..
-        :param game: GameState for help with determining winner and sampling opponent hand
-        :param num_simulations: how many simulations you want to do
-        :return: [win_rate, loss_rate, tie_rate]
+        :return: vector of  two cards for the opponent (Card.eval_card)
         """
+        return random.sample(self.available_hands, nsims)
         
-        ehs = [0] * 3
-        for _ in range(num_simulations):
 
-            idx = game.get_winner()
-
-            # increment win rate for winner/tie
-            ehs[idx] += 1 / num_simulations
-
-        return ehs
-
-@ray.remote
-def process_river_ehs(evals, public: List[int]) -> List[float]:
-        """
-
-        :param public: this is just all the cards private + public (ie; hole cards plus public cards)
-        :return: [win_rate, loss_rate, tie_rate]
-        """
-        our_hand = list(public[:2])
-        board = list(public[2:7])
-
-        # get expected hand strength
-        game = GameUtility(our_hand=our_hand, board=board, cards=evals)
-
-        return simulate_get_ehs(game)
+   
 
 
 def get_card_combos(evals, num_cards: int) -> np.ndarray:
@@ -207,12 +196,18 @@ class InfoBucketMaker(InfoSets):
         overarching_start = time.time()
         start = time.time()
         self._river_ehs = []
-        for ray_idx_1 in tqdm(range(len(self.river))):
-            self._river_ehs.append(process_river_ehs.remote(self.river[i]))
         
-        self._river_centroids, self._river_clusters = self.cluster(
-            num_clusters=40, X=self._river_ehs
-        )
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+             self._turn_ehs_distributions = [] list(
+                 tqdm(
+                     executor.map(
+                         self.process_river_ehs_fast,
+                         self.river,
+                         chunksize=len(self.river) // 160,
+                     ),
+                     total=len(self.river),
+                 )
+             )
         end = time.time()
         print(f"Finding River EHS Took {end - start} Seconds")
 
@@ -295,6 +290,18 @@ class InfoBucketMaker(InfoSets):
 
         return ehs
 
+    @staticmethod
+    def simulate_get_ehs_fast(game: GameUtility, num_simulations: int = 10) -> List[float]:
+        """
+        # TODO: probably want to increase simulations..
+        :param game: GameState for help with determining winner and sampling opponent hand
+        :param num_simulations: how many simulations you want to do
+        :return: [win_rate, loss_rate, tie_rate]
+        """
+        ehs = game.get_winner_fast()
+
+        return ehs
+    
     def simulate_get_turn_ehs_distributions(
         self,
         available_cards: List[int],
@@ -354,6 +361,20 @@ class InfoBucketMaker(InfoSets):
         game = GameUtility(our_hand=our_hand, board=board, cards=self._evals)
 
         return self.simulate_get_ehs(game)
+    
+    def process_river_ehs_fast(self, public: List[int]) -> List[float]:
+        """
+
+        :param public: this is just all the cards private + public (ie; hole cards plus public cards)
+        :return: [win_rate, loss_rate, tie_rate]
+        """
+        our_hand = list(public[:2])
+        board = list(public[2:7])
+
+        # get expected hand strength
+        game = GameUtility(our_hand=our_hand, board=board, cards=self._evals)
+
+        return self.simulate_get_ehs_fast(game)
 
     def process_turn_ehs_distributions(self, public: List[int]) -> List[float]:
         """
